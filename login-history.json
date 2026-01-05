@@ -1,0 +1,80 @@
+[
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:45:42.225Z",
+    "sessionId": 1765871142225
+  },
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:45:25.166Z",
+    "sessionId": 1765871125166
+  },
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:38:41.422Z",
+    "sessionId": 1765870721422
+  },
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:38:20.838Z",
+    "sessionId": 1765870700838
+  },
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:37:26.845Z",
+    "sessionId": 1765870646845
+  },
+  {
+    "type": "LOGIN",
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:32:33.760Z",
+    "sessionId": 1765870353760
+  },
+  {
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T07:23:55.579Z",
+    "sessionId": 1765869835579
+  },
+  {
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T04:34:09.410Z",
+    "sessionId": 1765859649410
+  },
+  {
+    "staffId": "NV014",
+    "staffName": "Nguyễn Thị Thảo",
+    "position": "Nhân viên",
+    "dob": "04/6/1991",
+    "loginTime": "2025-12-16T04:32:38.777Z",
+    "sessionId": 1765859558777
+  }
+]

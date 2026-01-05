@@ -1,0 +1,20 @@
+[
+  {
+    "citizenId": "051097000427",
+    "fullName": "Phan Văn Hùng",
+    "timestamp": "2025-12-16T04:19:49.997Z",
+    "serverResponse": {
+      "makiemsoat": "051097000427",
+      "status": 1,
+      "background": "green",
+      "alert": "thanhcong",
+      "total": 2,
+      "text_1": " ",
+      "text_2": null,
+      "text_3": null,
+      "text_4": " 11:21 16/12"
+    },
+    "result": "GRANTED",
+    "processedBy": "System"
+  }
+]
