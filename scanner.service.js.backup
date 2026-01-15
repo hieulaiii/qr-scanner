@@ -1,7 +1,7 @@
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 
-async function initScanners(gates, onSlcan) {
+async function initScanners(gates, onScan) {
   console.log('🔍 Đang quét Zebra Scanner...\n');
   
   try {
@@ -25,6 +25,7 @@ async function initScanners(gates, onSlcan) {
     let connectedCount = 0;
     
     for (const [gateKey, gate] of Object.entries(gates)) {
+      // ⭐ TÌM THEO locationId (cố định vĩnh viễn)
       const portInfo = zebraPorts.find(p => 
         p.locationId === gate.locationId
       );
@@ -59,7 +60,7 @@ async function initScanners(gates, onSlcan) {
           gateName: gate.name,
           qrData,
           apikey: gate.apikey,
-          me31: gate.me31
+          inbio: gate.inbio
         });
       });
       
@@ -67,12 +68,7 @@ async function initScanners(gates, onSlcan) {
         connectedCount++;
         console.log(`✅ ${gate.name} connected`);
         console.log(`   └─ COM: ${portInfo.path} (auto-detected)`);
-        console.log(`   └─ Location: ${gate.locationId}`);
-        
-        if (gate.me31) {
-          console.log(`   └─ ME31: ${gate.me31.ip}:${gate.me31.port} (Relay ${gate.me31.relayChannel + 1})`);
-        }
-        console.log('');
+        console.log(`   └─ Location: ${gate.locationId}\n`);
       });
       
       port.on('error', err => {

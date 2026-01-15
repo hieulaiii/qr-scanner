@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const player = require('play-sound')(opts = {});
 const { execFile } = require('child_process');
-const net = require('net'); // ⭐ THÊM: Cho Modbus TCP
 const app = express();
 
 const { initScanners } = require('./scanner.service');
@@ -14,32 +13,24 @@ const { initScanners } = require('./scanner.service');
 // 🔧 CẤU HÌNH
 // ============================================
 const PORT = 8080;
+// const CURRENT_GATE = 'GATE_A';
 
 const GATES = {
   GATE_A: {
     name: 'Cổng A',
     locationId: 'Port_#0005.Hub_#0001',
     apikey: 'n6NIHw6B69iXFIXrve05hC49v8hclIn2',
-    me31: {
-      ip: '192.168.1.9',
-      port: 502,
-      relayChannel: 0,        // Relay 1 (địa chỉ Modbus: 0x0000)
-      pulseDuration: 5000     // Thời gian mở cửa: 5 giây
-    }
+    inbio: { ip: '192.168.2.35', port: 8080, doorId: 1 }
   },
   GATE_B: {
     name: 'Cổng B',
     locationId: 'Port_#0003.Hub_#0001',
     apikey: 'd16Y43G0y2bO592qdxqwYk2d1PLFBqW8',
-    me31: {
-      ip: '192.168.1.9',
-      port: 502,
-      relayChannel: 1,        // Relay 2 (địa chỉ Modbus: 0x0001)
-      pulseDuration: 5000
-    }
+    inbio: { ip: '192.168.2.35', port: 8080, doorId: 2 }
   }
 };
 
+// const GATE_CONFIG = GATES[CURRENT_GATE];
 const LOGIN_HISTORY_FILE = path.join(__dirname, 'staff-scan-history.json');
 
 const SOUND_FILES = {
@@ -52,7 +43,7 @@ const SOUND_FILES = {
   CCCD_REQUEST_FOREIGN: path.join(__dirname, 'sounds', 'please-show-your-id.mp3'),
 };
 
-const MAIN_SERVER = {
+ const MAIN_SERVER = {
   url: 'https://noibo.cangsaky.com.vn/api.php',
   module: 'phongve',
   action: 'KiemSoat',
@@ -88,98 +79,8 @@ const STAFF_LIST = [
 let currentLoginSession = null;
 let latestScan = null;
 let isProcessing = false;
-
-// ============================================
-// 🔌 MODBUS TCP - ME31 CONTROL
-// ============================================
-let transactionId = 0;
-
-/**
- * Gửi lệnh Modbus TCP đến ME31
- * @param {string} ip - IP của ME31
- * @param {number} port - Port Modbus (mặc định 502)
- * @param {number} relayAddress - Địa chỉ relay (0=Relay1, 1=Relay2)
- * @param {boolean} state - true=ON, false=OFF
- */
-function sendModbusCommand(ip, port, relayAddress, state) {
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection({ host: ip, port });
-    
-    const timeoutHandler = setTimeout(() => {
-      client.destroy();
-      reject(new Error(`ME31 timeout (${ip}:${port})`));
-    }, 3000);
-
-    client.on('connect', () => {
-      transactionId = (transactionId + 1) % 65536;
-      
-      const command = Buffer.from([
-        (transactionId >> 8) & 0xFF,  // Transaction ID (high byte)
-        transactionId & 0xFF,          // Transaction ID (low byte)
-        0x00, 0x00,                    // Protocol ID (luôn là 0 với Modbus TCP)
-        0x00, 0x06,                    // Length (6 bytes tiếp theo)
-        
-        0x01,                          // Unit ID (slave address, thường là 1)
-        0x05,                          // Function Code: Write Single Coil
-        0x00, relayAddress,            // Coil Address (0x0000=Relay1, 0x0001=Relay2)
-        state ? 0xFF : 0x00, 0x00     // Value (0xFF00=ON, 0x0000=OFF)
-      ]);
-      
-      client.write(command);
-    });
-
-    client.on('data', (data) => {
-      clearTimeout(timeoutHandler);
-      
-      if (data.length >= 8 && data[7] === 0x05) {
-        resolve(true);
-      } else {
-        console.warn('   ⚠️ ME31 unexpected response:', data.toString('hex'));
-        resolve(false);
-      }
-      
-      client.end();
-    });
-
-    client.on('error', (err) => {
-      clearTimeout(timeoutHandler);
-      reject(err);
-    });
-  });
-}
-
-async function openDoorME31(me31Config) {
-  const { ip, port, relayChannel, pulseDuration } = me31Config;
-  
-  try {
-    console.log(`   🚪 ME31: Opening Relay ${relayChannel + 1} at ${ip}`);
-    
-    const opened = await sendModbusCommand(ip, port, relayChannel, true);
-    
-    if (opened) {
-      console.log(`   ✅ Door OPENED (Relay ${relayChannel + 1})`);
-      
-      setTimeout(async () => {
-        try {
-          await sendModbusCommand(ip, port, relayChannel, false);
-          console.log(`   🔒 Door CLOSED after ${pulseDuration / 1000}s`);
-        } catch (err) {
-          console.error(`   ❌ Failed to close door:`, err.message);
-        }
-      }, pulseDuration);
-      
-      return true;
-    } else {
-      console.error(`   ❌ ME31 did not confirm door open`);
-      return false;
-    }
-    
-  } catch (error) {
-    console.error(`   ❌ ME31 Error:`, error.message);
-    console.error(`   💡 Check: IP=${ip}, Port=${port}, Relay=${relayChannel}`);
-    return false;
-  }
-}
+let commandIdCounter = 0;
+let commandQueue = [];
 
 // ============================================
 // 📡 SSE - Server-Sent Events
@@ -196,6 +97,22 @@ function sendSSEToAllClients(data) {
 // ============================================
 // 🔊 AUDIO PLAYER FUNCTIONS
 // ============================================
+function playSound(soundFile, description = '') {
+  if (!fs.existsSync(soundFile)) {
+    console.error(`   ❌ Sound file not found: ${soundFile}`);
+    console.error(`   💡 Please create this file with recorded voice`);
+    return;
+  }
+
+  console.log(`   🔊 Playing: ${description || path.basename(soundFile)}`);
+  
+  player.play(soundFile, (err) => {
+    if (err) {
+      console.error(`   ❌ Audio Error: ${err.message}`);
+    }
+  });
+}
+
 let isPlayingSound = false;
 
 function playSoundSilent(soundFile) {
@@ -209,8 +126,15 @@ function playSoundSilent(soundFile) {
 
   execFile(
     'ffplay',
-    ['-nodisp', '-autoexit', '-loglevel', 'error', soundFile],
-    { windowsHide: true },
+    [
+      '-nodisp',
+      '-autoexit',
+      '-loglevel', 'error',
+      soundFile
+    ],
+    {
+      windowsHide: true
+    },
     () => {
       isPlayingSound = false;
     }
@@ -226,6 +150,10 @@ function playSoundDenied(isVietnamese = true) {
   const soundFile = isVietnamese ? SOUND_FILES.DENIED_VN : SOUND_FILES.DENIED_FOREIGN;
   playSoundSilent(soundFile);
 }
+
+// function playSoundStaffWelcome() {
+//   playSoundSilent(SOUND_FILES.STAFF_WELCOME);
+// }
 
 function playSoundCCCDRequest(isVietnamese = true) {
   const soundFile = isVietnamese ? SOUND_FILES.CCCD_REQUEST_VN : SOUND_FILES.CCCD_REQUEST_FOREIGN;
@@ -250,9 +178,6 @@ function ensureSoundFolder() {
   console.log('');
 }
 
-// ============================================
-// 💾 FILE OPERATIONS
-// ============================================
 function loadStaffScanHistory() {
   try {
     if (fs.existsSync(LOGIN_HISTORY_FILE)) {
@@ -268,9 +193,15 @@ function loadStaffScanHistory() {
 function saveStaffScan(record) {
   try {
     const history = loadStaffScanHistory();
+    
     record.id = `SCAN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     history.unshift(record);
-    if (history.length > 1000) history.splice(1000);
+    
+    if (history.length > 1000) {
+      history.splice(1000);
+    }
+    
     fs.writeFileSync(LOGIN_HISTORY_FILE, JSON.stringify(history, null, 2));
     console.log('   💾 Saved staff scan to history');
   } catch (error) {
@@ -282,6 +213,7 @@ function updateStaffScanReason(scanId, reason) {
   try {
     const history = loadStaffScanHistory();
     const record = history.find(r => r.id === scanId);
+    
     if (record) {
       record.note = reason;
       record.updatedAt = new Date().toISOString();
@@ -307,7 +239,7 @@ function getView(filename, data = {}) {
 // ============================================
 // 🎯 CORE PROCESSING FUNCTIONS
 // ============================================
-async function processStaffScan(qrData, me31Config) {
+async function processStaffScan(qrData, inbioConfig) {
   const staffId = qrData.replace('STAFF:', '');
   const staff = STAFF_LIST.find(s => s.id === staffId);
   
@@ -318,10 +250,13 @@ async function processStaffScan(qrData, me31Config) {
 
   console.log(`✅ Staff: ${staff.name} (${staff.position})`);
   
-  const doorOpened = await openDoorME31(me31Config);
-  console.log(doorOpened ? '   🚪 Door control sent' : '   ❌ Door control failed');
+  const doorOpened = await openDoorInBio(inbioConfig);
+  console.log(doorOpened ? '   🚪 Door OPENED' : '   ❌ Door failed');
+  
+  // playSoundStaffWelcome();
   
   const scanType = !currentLoginSession ? 'Đăng nhập' : 'Chưa rõ lý do';
+  
   const scanRecord = {
     staffId: staff.id,
     staffName: staff.name,
@@ -347,13 +282,14 @@ async function processStaffScan(qrData, me31Config) {
 
 function extractCitizenInfo(qrData) {
   const parts = qrData.split('|');
+  
   if (parts.length >= 3) {
     return {
-      citizenId: parts[0],
-      idNumber: parts[1],
-      fullName: parts[2],
-      dob: parts[3],
-      gender: parts[4]
+      citizenId: parts[0],      
+      idNumber: parts[1],         
+      fullName: parts[2],           
+      dob: parts[3],               
+      gender: parts[4]        
     };
   } else {
     return {
@@ -366,7 +302,7 @@ function extractCitizenInfo(qrData) {
   }
 }
 
-async function processGuestScan(qrData, gateName, gateKey, apikey, me31) {
+async function processGuestScan(qrData, gateName, gateKey, apikey, inbio) {
   const guestInfo = extractCitizenInfo(qrData);
   console.log(`   📋 ${guestInfo.fullName} | 🆔 ${guestInfo.citizenId}`);
   
@@ -397,7 +333,8 @@ async function processGuestScan(qrData, gateName, gateKey, apikey, me31) {
       console.log(`   🪪 CCCD verification required`);
       playSoundCCCDRequest(true);
     } else {
-      await openDoorME31(me31);
+      openDoorInBio(inbio);
+      // playSoundSuccess(isVietnamese);
       console.log(`   🚪 Door command sent`);
     }
   } else {
@@ -409,7 +346,7 @@ async function processGuestScan(qrData, gateName, gateKey, apikey, me31) {
 // ============================================
 // 🔌 ZEBRA SCANNER INTEGRATION
 // ============================================
-initScanners(GATES, async ({ gateKey, gateName, qrData, apikey, me31 }) => {
+initScanners(GATES, async ({ gateKey, gateName, qrData, apikey, inbio }) => {
   if (isProcessing) {
     console.log('⏳ Already processing, skipping...');
     return;
@@ -423,13 +360,15 @@ initScanners(GATES, async ({ gateKey, gateName, qrData, apikey, me31 }) => {
   
   try {
     if (qrData.startsWith('STAFF:')) {
-      await processStaffScan(qrData, me31);
-    } else {
+      await processStaffScan(qrData, inbio);
+    } 
+    else {
       if (!currentLoginSession) {
         console.log(`❌ [${gateName}] Chưa đăng nhập - bỏ qua`);
         return;
       }
-      await processGuestScan(qrData, gateName, gateKey, apikey, me31);
+      
+      await processGuestScan(qrData, gateName, gateKey, apikey, inbio);
     }
   } catch (error) {
     console.error('❌ Error:', error.message);
@@ -459,17 +398,48 @@ async function verifyWithMainServer(citizenId, apikey, timeout = 2000) {
       timeout
     });
     
-    console.log(`   📥 Response received`);
+    console.log(`   📥 Response received in ${response.duration || 'N/A'}ms`);
     return response.data;
     
   } catch (error) {
     if (error.code === 'ECONNABORTED') {
       console.error(`   ⏱️ Server timeout after ${timeout}ms`);
+    } else if (error.code === 'ETIMEDOUT') {
+      console.error(`   ⏱️ Connection timeout`);
     } else {
       console.error('   ❌ Server error:', error.message);
     }
     return null;
   }
+}
+
+async function openDoorInBio(inbioConfig, seconds = 5) {
+  if (!inbioConfig) {
+    console.error('   ❌ InBio config is required');
+    return false;
+  }
+  
+  const cmdId = ++commandIdCounter;
+  const door = inbioConfig.doorId;
+  
+  const doorHex = door.toString(16).padStart(2, '0');
+  const secHex = seconds.toString(16).padStart(2, '0');
+  const command = `C:${cmdId}:CONTROL DEVICE 01${doorHex}01${secHex}`;
+
+  commandQueue.unshift({
+  id: cmdId,
+  command,
+  timestamp: new Date(),
+  door,
+  ip: inbioConfig.ip,
+  type: 'OPEN_DOOR'
+});
+
+axios.get(`http://${inbioConfig.ip}:${inbioConfig.port || 80}/iclock/getrequest`)
+  .catch(()=>{});
+
+  console.log(`   🚪 Door ${door} opening (${inbioConfig.ip})`);
+  return true;
 }
 
 // ============================================
@@ -490,7 +460,10 @@ app.get('/api/scan-stream', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
   if (latestScan) {
-    res.write(`data: ${JSON.stringify({ event: 'newScan', data: latestScan })}\n\n`);
+    res.write(`data: ${JSON.stringify({
+      event: 'newScan',
+      data: latestScan
+    })}\n\n`);
   }
   
   sseClients.add(res);
@@ -506,6 +479,47 @@ app.get('/api/scan-stream', (req, res) => {
     console.log(`❌ SSE Client disconnected (Total: ${sseClients.size})`);
   });
 });
+
+// ============================================
+// 🎯 INBIO API ENDPOINTS
+// ============================================
+app.get('/iclock/cdata', (req, res) => res.send('OK'));
+app.post('/iclock/registry', (req, res) => res.send('RegistryCode=ABC123DEF456'));
+app.get('/iclock/push', (req, res) => {
+  console.log('📥 InBio đang lấy config mới');
+  res.send(`ServerVersion=3.0.1
+    ServerName=CANG_SA_KY_GATE
+    PushVersion=3.0.1
+    Realtime=1
+    RequestDelay=0.05000000.
+    
+    TimeoutSec=5`);
+});
+
+app.get('/iclock/ping', (req, res) => res.send('OK'));
+
+let lastPollTime = 0;
+let warmupTimer = null;
+
+app.get('/iclock/getrequest', (req, res) => {
+  const now = Date.now();
+  const interval = lastPollTime ? now - lastPollTime : 0;
+  lastPollTime = now;
+  
+  if (interval > 0) {
+    console.log(`📊 InBio poll sau ${Math.round(interval/1000)}s`);
+  }
+
+  if (commandQueue.length === 0) {
+    return res.send('OK');
+  }
+  const cmd = commandQueue.shift();
+  
+  console.log(`📤 Command: ${cmd.command}`);
+  res.send(cmd.command);
+});
+
+app.post('/iclock/devicecmd', (req, res) => res.send('OK'));
 
 // ============================================
 // 🌐 WEB INTERFACE
@@ -544,7 +558,10 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/latest-scan', (req, res) => {
   const staffHistory = loadStaffScanHistory();
-  res.json({ latestScan, history: staffHistory.slice(0, 50) });
+  res.json({
+    latestScan,
+    history: staffHistory.slice(0, 50)
+  });
 });
 
 app.get('/api/staff-history', (req, res) => {
@@ -557,6 +574,7 @@ app.get('/api/staff-history', (req, res) => {
       const start = startDate ? new Date(startDate) : new Date(0);
       const end = endDate ? new Date(endDate) : new Date();
       end.setHours(23, 59, 59, 999);
+      
       return recordDate >= start && recordDate <= end;
     });
   }
@@ -609,12 +627,12 @@ function createDesktopShortcut() {
     const iconPath = path.join(__dirname, 'assets', 'images', 'logo.ico').replace(/\\/g, '\\\\');
     
     const shortcutContent = `[InternetShortcut]
-URL=http://localhost:${PORT}
-IconIndex=0
-IconFile=${iconPath}
-`;
+      URL=http://localhost:${PORT}
+      IconIndex=0
+      IconFile=${iconPath}
+    `;
     fs.writeFileSync(shortcutPath, shortcutContent);
-    console.log('   ✅ Desktop shortcut created!');
+    console.log('   ✅ Desktop shortcut created with custom icon!');
   } catch (err) {
     console.log('   ⚠️  Could not create shortcut:', err.message);
   }
@@ -626,26 +644,37 @@ app.listen(PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
   
   console.log('\n╔════════════════════════════════════════════════╗');
-  console.log('║  🚀 QR Access Control System (ME31)           ║');
+  console.log('║  🚀 QR Access Control System Running          ║');
   console.log(`║  📡 Port: ${PORT}                                 ║`);
-  console.log(`║  🔌 Controller: ME31 Modbus TCP               ║`);
+  console.log(`║  🌐 Server: noibo.cangsaky.com.vn              ║`);
   console.log('╚════════════════════════════════════════════════╝');
   console.log('\n📍 Access from:');
   console.log(`   🏠 This computer:  http://localhost:${PORT}`);
   console.log(`   🌐 Other devices:  http://${localIP}:${PORT}`);
-  console.log('\n🔌 ME31 Devices:');
-  Object.entries(GATES).forEach(([key, gate]) => {
-    console.log(`   ${gate.name}: ${gate.me31.ip}:${gate.me31.port} (Relay ${gate.me31.relayChannel + 1})`);
-  });
   
   createDesktopShortcut();
   
   const { exec } = require('child_process');
   exec(`start http://localhost:${PORT}`);
+
+  // ⭐ KEEP INBIO ALIVE
+  warmupTimer = setInterval(() => {
+  if (commandQueue.length > 0) return;
+
+  const nextId = ++commandIdCounter;
+  commandQueue.push({
+    id: nextId,
+    command: `C:${nextId}:NOP`,
+    timestamp: Date.now(),
+    type: 'keepalive'
+  });
+  console.log('🔥 Keep-alive queued (idle)');
+}, 20000);
 });
 
 process.on('SIGINT', () => {
   console.log('\n\n👋 Service stopped');
+  if(warmupTimer) clearInterval(warmupTimer)
   sseClients.clear();
   process.exit(0);
 });
