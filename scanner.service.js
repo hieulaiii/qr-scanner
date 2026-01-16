@@ -1,7 +1,7 @@
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 
-async function initScanners(gates, onSlcan) {
+async function initScanners(gates, onScan) {
   console.log('🔍 Đang quét Zebra Scanner...\n');
   
   try {
