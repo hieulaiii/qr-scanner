@@ -1,10 +1,12 @@
 {
   "name": "qr-access-control",
   "version": "1.0.0",
+   "description": "QR Access Control System with ME31 Modbus Controller",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "author": "Lai Van Hieu",
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",
     "axios": "^1.6.0",

@@ -1,590 +1,101 @@
 const express = require('express');
-const axios = require('axios');
-const FormData = require('form-data');
-const fs = require('fs');
 const path = require('path');
-const player = require('play-sound')(opts = {});
-const { execFile } = require('child_process');
-const net = require('net'); // ⭐ THÊM: Cho Modbus TCP
+const fs = require('fs');
+const os = require('os');
+const { exec } = require('child_process');
+
+// ============================================
+// 📦 IMPORT MODULES
+// ============================================
+const config = require('./config');
+const logger = require('./utils/logger');
+const scanController = require('./controllers/scan.controller');
+const scannerService = require('./services/scanner.service');
+const apiRoutes = require('./routes/api.routes');
+
+// ============================================
+// 🚀 EXPRESS APP
+// ============================================
 const app = express();
 
-const { initScanners } = require('./scanner.service');
-
-// ============================================
-// 🔧 CẤU HÌNH
-// ============================================
-const PORT = 8080;
-
-const GATES = {
-  GATE_A: {
-    name: 'Cổng A',
-    locationId: 'Port_#0005.Hub_#0001',
-    apikey: 'n6NIHw6B69iXFIXrve05hC49v8hclIn2',
-    me31: {
-      ip: '192.168.1.9',
-      port: 502,
-      relayChannel: 0,        // Relay 1 (địa chỉ Modbus: 0x0000)
-      pulseDuration: 5000     // Thời gian mở cửa: 5 giây
-    }
-  },
-  GATE_B: {
-    name: 'Cổng B',
-    locationId: 'Port_#0003.Hub_#0001',
-    apikey: 'd16Y43G0y2bO592qdxqwYk2d1PLFBqW8',
-    me31: {
-      ip: '192.168.1.9',
-      port: 502,
-      relayChannel: 1,        // Relay 2 (địa chỉ Modbus: 0x0001)
-      pulseDuration: 5000
-    }
-  }
-};
-
-const LOGIN_HISTORY_FILE = path.join(__dirname, 'staff-scan-history.json');
-
-const SOUND_FILES = {
-  SUCCESS_VN: path.join(__dirname, 'sounds', 'moi-quy-khach-qua.mp3'),
-  SUCCESS_FOREIGN: path.join(__dirname, 'sounds', 'moi-quy-khach-qua-v2.mp3'),
-  DENIED_VN: path.join(__dirname, 'sounds', 've-khong-hop-le.mp3'),
-  DENIED_FOREIGN: path.join(__dirname, 'sounds', 've-khong-hop-le-v2.mp3'),
-  ERROR: path.join(__dirname, 'sounds', 'loi-he-thong.mp3'),
-  CCCD_REQUEST_VN: path.join(__dirname, 'sounds', 'vui-long-xuat-trinh-cccd.mp3'),
-  CCCD_REQUEST_FOREIGN: path.join(__dirname, 'sounds', 'please-show-your-id.mp3'),
-};
-
-const MAIN_SERVER = {
-  url: 'https://noibo.cangsaky.com.vn/api.php',
-  module: 'phongve',
-  action: 'KiemSoat',
-  payload: '0'
-};
-
-// DANH SÁCH NHÂN VIÊN
-const STAFF_LIST = [
-  { id: 'NV001', name: 'Nguyễn Hữu Đoan', position: 'Giám đốc', dob: '23/6/1971' },
-  { id: 'NV002', name: 'Phạm Tấn Duy', position: 'Phó Giám đốc', dob: '24/9/1988' },
-  { id: 'NV003', name: 'Trần Bút', position: 'Phó Giám đốc', dob: '10/3/1966' },
-  { id: 'NV004', name: 'Đoàn Khắc A Duyệt', position: 'Trưởng phòng', dob: '03/01/1985' },
-  { id: 'NV005', name: 'Lê Văn Sanh', position: 'Tổ trưởng', dob: '26/7/1988' },
-  { id: 'NV006', name: 'Nguyễn T Sơn Thủy', position: 'Nhân viên', dob: '08/3/1983' },
-  { id: 'NV007', name: 'Lê Văn Tiên', position: 'Nhân viên', dob: '08/11/1992' },
-  { id: 'NV008', name: 'Trương Đình Hòa', position: 'Nhân viên', dob: '18/10/1988' },
-  { id: 'NV009', name: 'Lê Văn Quang', position: 'Nhân viên', dob: '18/4/1984' },
-  { id: 'NV010', name: 'Phan Văn Hùng', position: 'Nhân viên', dob: '22/9/1997' },
-  { id: 'NV011', name: 'Nguyễn Quang Lam', position: 'Nhân viên', dob: '01/3/1995' },
-  { id: 'NV012', name: 'Dương T Kim Phượng', position: 'Nhân viên', dob: '11/10/1988' },
-  { id: 'NV013', name: 'Mai Văn Tồn', position: 'Nhân viên', dob: '20/10/1984' },
-  { id: 'NV014', name: 'Nguyễn Thị Thảo', position: 'Nhân viên', dob: '04/6/1991' },
-  { id: 'NV015', name: 'Lê Thùy Mỹ Dung', position: 'Nhân viên', dob: '20/11/2000' },
-  { id: 'NV016', name: 'Trần Thị Đạt', position: 'Nhân viên', dob: '10/9/1980' },
-  { id: 'NV017', name: 'Phạm Nguyễn Anh Hoàng', position: 'Lái xe', dob: '16/6/1980' },
-  { id: 'NV018', name: 'Trần Văn Dũng', position: 'Lái xe', dob: '20/3/2002' },
-  { id: 'NV019', name: 'Nguyễn Chí Thiết', position: 'Bảo vệ', dob: '17/10/1983' },
-  { id: 'NV020', name: 'Võ Trí Danh', position: 'Bảo vệ', dob: '10/7/1993' },
-  { id: 'NV021', name: 'Lê Thị Thu', position: 'Tạp vụ', dob: '09/02/1979' },
-  { id: 'NV022', name: 'Lê Văn Thanh', position: 'Nhân viên', dob: '02/3/1982' }
-];
-
-let currentLoginSession = null;
-let latestScan = null;
-let isProcessing = false;
-
-// ============================================
-// 🔌 MODBUS TCP - ME31 CONTROL
-// ============================================
-let transactionId = 0;
-
-/**
- * Gửi lệnh Modbus TCP đến ME31
- * @param {string} ip - IP của ME31
- * @param {number} port - Port Modbus (mặc định 502)
- * @param {number} relayAddress - Địa chỉ relay (0=Relay1, 1=Relay2)
- * @param {boolean} state - true=ON, false=OFF
- */
-function sendModbusCommand(ip, port, relayAddress, state) {
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection({ host: ip, port });
-    
-    const timeoutHandler = setTimeout(() => {
-      client.destroy();
-      reject(new Error(`ME31 timeout (${ip}:${port})`));
-    }, 3000);
-
-    client.on('connect', () => {
-      transactionId = (transactionId + 1) % 65536;
-      
-      const command = Buffer.from([
-        (transactionId >> 8) & 0xFF,  // Transaction ID (high byte)
-        transactionId & 0xFF,          // Transaction ID (low byte)
-        0x00, 0x00,                    // Protocol ID (luôn là 0 với Modbus TCP)
-        0x00, 0x06,                    // Length (6 bytes tiếp theo)
-        
-        0x01,                          // Unit ID (slave address, thường là 1)
-        0x05,                          // Function Code: Write Single Coil
-        0x00, relayAddress,            // Coil Address (0x0000=Relay1, 0x0001=Relay2)
-        state ? 0xFF : 0x00, 0x00     // Value (0xFF00=ON, 0x0000=OFF)
-      ]);
-      
-      client.write(command);
-    });
-
-    client.on('data', (data) => {
-      clearTimeout(timeoutHandler);
-      
-      if (data.length >= 8 && data[7] === 0x05) {
-        resolve(true);
-      } else {
-        console.warn('   ⚠️ ME31 unexpected response:', data.toString('hex'));
-        resolve(false);
-      }
-      
-      client.end();
-    });
-
-    client.on('error', (err) => {
-      clearTimeout(timeoutHandler);
-      reject(err);
-    });
-  });
-}
-
-async function openDoorME31(me31Config) {
-  const { ip, port, relayChannel, pulseDuration } = me31Config;
-  
-  try {
-    console.log(`   🚪 ME31: Opening Relay ${relayChannel + 1} at ${ip}`);
-    
-    const opened = await sendModbusCommand(ip, port, relayChannel, true);
-    
-    if (opened) {
-      console.log(`   ✅ Door OPENED (Relay ${relayChannel + 1})`);
-      
-      setTimeout(async () => {
-        try {
-          await sendModbusCommand(ip, port, relayChannel, false);
-          console.log(`   🔒 Door CLOSED after ${pulseDuration / 1000}s`);
-        } catch (err) {
-          console.error(`   ❌ Failed to close door:`, err.message);
-        }
-      }, pulseDuration);
-      
-      return true;
-    } else {
-      console.error(`   ❌ ME31 did not confirm door open`);
-      return false;
-    }
-    
-  } catch (error) {
-    console.error(`   ❌ ME31 Error:`, error.message);
-    console.error(`   💡 Check: IP=${ip}, Port=${port}, Relay=${relayChannel}`);
-    return false;
-  }
-}
-
-// ============================================
-// 📡 SSE - Server-Sent Events
-// ============================================
-const sseClients = new Set();
-
-function sendSSEToAllClients(data) {
-  sseClients.forEach(client => {
-    client.write(`data: ${JSON.stringify(data)}\n\n`);
-  });
-  console.log(`   📤 SSE pushed to ${sseClients.size} client(s)`);
-}
-
-// ============================================
-// 🔊 AUDIO PLAYER FUNCTIONS
-// ============================================
-let isPlayingSound = false;
-
-function playSoundSilent(soundFile) {
-  if (!fs.existsSync(soundFile)) {
-    console.error('❌ Sound file not found:', soundFile);
-    return;
-  }
-
-  if (isPlayingSound) return;
-  isPlayingSound = true;
-
-  execFile(
-    'ffplay',
-    ['-nodisp', '-autoexit', '-loglevel', 'error', soundFile],
-    { windowsHide: true },
-    () => {
-      isPlayingSound = false;
-    }
-  );
-}
-
-function playSoundSuccess(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.SUCCESS_VN : SOUND_FILES.SUCCESS_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function playSoundDenied(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.DENIED_VN : SOUND_FILES.DENIED_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function playSoundCCCDRequest(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.CCCD_REQUEST_VN : SOUND_FILES.CCCD_REQUEST_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function ensureSoundFolder() {
-  const soundsDir = path.join(__dirname, 'sounds');
-  if (!fs.existsSync(soundsDir)) {
-    fs.mkdirSync(soundsDir);
-    console.log('📁 Created sounds folder');
-  }
-  
-  console.log('\n🔊 Checking sound files:');
-  Object.entries(SOUND_FILES).forEach(([key, filePath]) => {
-    if (fs.existsSync(filePath)) {
-      console.log(`   ✅ ${key}: ${path.basename(filePath)}`);
-    } else {
-      console.log(`   ⚠️  ${key}: ${path.basename(filePath)} - MISSING`);
-    }
-  });
-  console.log('');
-}
-
-// ============================================
-// 💾 FILE OPERATIONS
-// ============================================
-function loadStaffScanHistory() {
-  try {
-    if (fs.existsSync(LOGIN_HISTORY_FILE)) {
-      const data = fs.readFileSync(LOGIN_HISTORY_FILE, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (error) {
-    console.error('Error loading staff scan history:', error.message);
-  }
-  return [];
-}
-
-function saveStaffScan(record) {
-  try {
-    const history = loadStaffScanHistory();
-    record.id = `SCAN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    history.unshift(record);
-    if (history.length > 1000) history.splice(1000);
-    fs.writeFileSync(LOGIN_HISTORY_FILE, JSON.stringify(history, null, 2));
-    console.log('   💾 Saved staff scan to history');
-  } catch (error) {
-    console.error('   ❌ Error saving staff scan:', error.message);
-  }
-}
-
-function updateStaffScanReason(scanId, reason) {
-  try {
-    const history = loadStaffScanHistory();
-    const record = history.find(r => r.id === scanId);
-    if (record) {
-      record.note = reason;
-      record.updatedAt = new Date().toISOString();
-      fs.writeFileSync(LOGIN_HISTORY_FILE, JSON.stringify(history, null, 2));
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('Error updating scan reason:', error.message);
-    return false;
-  }
-}
-
-function getView(filename, data = {}) {
-  let html = fs.readFileSync(path.join(__dirname, 'views', filename), 'utf8');
-  Object.keys(data).forEach(key => {
-    const value = typeof data[key] === 'string' ? data[key] : JSON.stringify(data[key]);
-    html = html.replace(new RegExp(`{{${key}}}`, 'g'), value);
-  });
-  return html;
-}
-
-// ============================================
-// 🎯 CORE PROCESSING FUNCTIONS
-// ============================================
-async function processStaffScan(qrData, me31Config) {
-  const staffId = qrData.replace('STAFF:', '');
-  const staff = STAFF_LIST.find(s => s.id === staffId);
-  
-  if (!staff) {
-    console.log('❌ Invalid staff QR code');
-    return;
-  }
-
-  console.log(`✅ Staff: ${staff.name} (${staff.position})`);
-  
-  const doorOpened = await openDoorME31(me31Config);
-  console.log(doorOpened ? '   🚪 Door control sent' : '   ❌ Door control failed');
-  
-  const scanType = !currentLoginSession ? 'Đăng nhập' : 'Chưa rõ lý do';
-  const scanRecord = {
-    staffId: staff.id,
-    staffName: staff.name,
-    position: staff.position,
-    dob: staff.dob,
-    scanType: scanType,
-    timestamp: new Date().toISOString(),
-    note: ''
-  };
-  
-  saveStaffScan(scanRecord);
-  
-  if (!currentLoginSession) {
-    currentLoginSession = {
-      staffId: staff.id,
-      staffName: staff.name,
-      position: staff.position,
-      loginTime: new Date().toISOString()
-    };
-    console.log(`   🔓 Dashboard access granted`);
-  }
-}
-
-function extractCitizenInfo(qrData) {
-  const parts = qrData.split('|');
-  if (parts.length >= 3) {
-    return {
-      citizenId: parts[0],
-      idNumber: parts[1],
-      fullName: parts[2],
-      dob: parts[3],
-      gender: parts[4]
-    };
-  } else {
-    return {
-      citizenId: qrData,
-      idNumber: qrData,
-      fullName: 'Unknown',
-      dob: null,
-      gender: null
-    };
-  }
-}
-
-async function processGuestScan(qrData, gateName, gateKey, apikey, me31) {
-  const guestInfo = extractCitizenInfo(qrData);
-  console.log(`   📋 ${guestInfo.fullName} | 🆔 ${guestInfo.citizenId}`);
-  
-  const serverResponse = await verifyWithMainServer(guestInfo.citizenId, apikey, 1500);
-  
-  const isCCCD = /^\d{12}$/.test(guestInfo.citizenId);
-  const isVietnamese = isCCCD || (serverResponse?.quoctichvn === 1);
-  
-  latestScan = {
-    type: 'GUEST',
-    citizenId: guestInfo.citizenId,
-    idNumber: guestInfo.idNumber,
-    fullName: guestInfo.fullName,
-    dob: guestInfo.dob,
-    gender: guestInfo.gender,
-    timestamp: new Date().toISOString(),
-    serverResponse,
-    processedBy: gateName,
-    gateKey: gateKey
-  };
-  
-  sendSSEToAllClients({ event: 'newScan', data: latestScan });
-  
-  if (serverResponse?.alert === 'thanhcong') {
-    console.log(`✅ GRANTED`);
-    
-    if (serverResponse.yeucaucccd === 1) {
-      console.log(`   🪪 CCCD verification required`);
-      playSoundCCCDRequest(true);
-    } else {
-      await openDoorME31(me31);
-      console.log(`   🚪 Door command sent`);
-    }
-  } else {
-    console.log(`❌ DENIED`);
-    playSoundDenied(isVietnamese);
-  }
-}
-
-// ============================================
-// 🔌 ZEBRA SCANNER INTEGRATION
-// ============================================
-initScanners(GATES, async ({ gateKey, gateName, qrData, apikey, me31 }) => {
-  if (isProcessing) {
-    console.log('⏳ Already processing, skipping...');
-    return;
-  }
-  
-  isProcessing = true;
-  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`📋 QR Scanned from: ${gateName}`);
-  console.log(`📄 Raw Data: ${qrData.substring(0, 50)}...`);
-  console.log(`🕐 Time: ${new Date().toLocaleString()}`);
-  
-  try {
-    if (qrData.startsWith('STAFF:')) {
-      await processStaffScan(qrData, me31);
-    } else {
-      if (!currentLoginSession) {
-        console.log(`❌ [${gateName}] Chưa đăng nhập - bỏ qua`);
-        return;
-      }
-      await processGuestScan(qrData, gateName, gateKey, apikey, me31);
-    }
-  } catch (error) {
-    console.error('❌ Error:', error.message);
-  } finally {
-    isProcessing = false;
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  }
-});
-
-async function verifyWithMainServer(citizenId, apikey, timeout = 2000) {
-  console.log(`   📡 Verifying: ${citizenId}`);
-  
-  if (!apikey) {
-    throw new Error('API key is required');
-  }
-  
-  try {
-    const formData = new FormData();
-    formData.append('apikey', apikey);
-    formData.append('module', MAIN_SERVER.module);
-    formData.append('action', MAIN_SERVER.action);
-    formData.append('makiemsoat', citizenId);
-    formData.append('payload', MAIN_SERVER.payload);
-    
-    const response = await axios.post(MAIN_SERVER.url, formData, {
-      headers: formData.getHeaders(),
-      timeout
-    });
-    
-    console.log(`   📥 Response received`);
-    return response.data;
-    
-  } catch (error) {
-    if (error.code === 'ECONNABORTED') {
-      console.error(`   ⏱️ Server timeout after ${timeout}ms`);
-    } else {
-      console.error('   ❌ Server error:', error.message);
-    }
-    return null;
-  }
-}
-
-// ============================================
-// 🌐 WEB & API SERVER
-// ============================================
+// Middleware
 app.use(express.json());
 app.use(express.text({ type: '*/*' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/assets', express.static(path.join(__dirname, 'assets')));
+app.use('/assets', express.static(config.paths.assets));
+
+// API Routes
+app.use('/api', apiRoutes);
 
 // ============================================
-// 📡 SSE ENDPOINT
+// 🌐 WEB ROUTES
 // ============================================
-app.get('/api/scan-stream', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+
+/**
+ * Render view template
+ */
+function renderView(filename, data = {}) {
+  let html = fs.readFileSync(
+    path.join(config.paths.views, filename), 
+    'utf8'
+  );
   
-  if (latestScan) {
-    res.write(`data: ${JSON.stringify({ event: 'newScan', data: latestScan })}\n\n`);
-  }
-  
-  sseClients.add(res);
-  console.log(`✅ SSE Client connected (Total: ${sseClients.size})`);
-  
-  const heartbeat = setInterval(() => {
-    res.write(`: heartbeat\n\n`);
-  }, 30000);
-  
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    sseClients.delete(res);
-    console.log(`❌ SSE Client disconnected (Total: ${sseClients.size})`);
+  Object.keys(data).forEach(key => {
+    const value = typeof data[key] === 'string' 
+      ? data[key] 
+      : JSON.stringify(data[key]);
+    html = html.replace(new RegExp(`{{${key}}}`, 'g'), value);
   });
-});
+  
+  return html;
+}
 
-// ============================================
-// 🌐 WEB INTERFACE
-// ============================================
+/**
+ * Login page
+ */
 app.get('/', (req, res) => {
-  res.send(getView('login.html'));
+  res.send(renderView('login.html'));
 });
 
+/**
+ * Dashboard - requires login
+ */
 app.get('/dashboard', (req, res) => {
-  if (!currentLoginSession) {
-    res.redirect('/');
-    return;
+  if (!scanController.isLoggedIn()) {
+    return res.redirect('/');
   }
-  res.send(getView('dashboard.html'));
+  res.send(renderView('dashboard.html'));
 });
 
+/**
+ * QR Code Generator
+ */
 app.get('/generate-qr', (req, res) => {
-  res.send(getView('generate-qr.html', { STAFF_LIST }));
+  const storageService = require('./services/storage.service');
+  const STAFF_LIST = storageService.loadStaffList();
+  
+  res.send(renderView('generate-qr.html', { STAFF_LIST }));
 });
 
 // ============================================
-// 🔌 API ENDPOINTS
+// 🔌 SCANNER INITIALIZATION
 // ============================================
-app.get('/api/check-login', (req, res) => {
-  res.json({ isLoggedIn: currentLoginSession !== null });
-});
 
-app.get('/api/current-user', (req, res) => {
-  res.json({ user: currentLoginSession });
-});
-
-app.post('/api/logout', (req, res) => {
-  currentLoginSession = null;
-  res.json({ success: true });
-});
-
-app.get('/api/latest-scan', (req, res) => {
-  const staffHistory = loadStaffScanHistory();
-  res.json({ latestScan, history: staffHistory.slice(0, 50) });
-});
-
-app.get('/api/staff-history', (req, res) => {
-  const { startDate, endDate } = req.query;
-  let history = loadStaffScanHistory();
-  
-  if (startDate || endDate) {
-    history = history.filter(record => {
-      const recordDate = new Date(record.timestamp);
-      const start = startDate ? new Date(startDate) : new Date(0);
-      const end = endDate ? new Date(endDate) : new Date();
-      end.setHours(23, 59, 59, 999);
-      return recordDate >= start && recordDate <= end;
-    });
-  }
-  
-  res.json({ history });
-});
-
-app.post('/api/update-scan-reason', (req, res) => {
-  const { scanId, reason } = req.body;
-  
-  if (!scanId || !reason) {
-    return res.status(400).json({ success: false, message: 'Missing scanId or reason' });
-  }
-  
-  const success = updateStaffScanReason(scanId, reason);
-  
-  if (success) {
-    res.json({ success: true, message: 'Cập nhật lý do thành công' });
-  } else {
-    res.status(404).json({ success: false, message: 'Không tìm thấy bản ghi' });
-  }
-});
+/**
+ * Initialize scanners with callback
+ */
+scannerService.initialize(
+  config.gates,
+  (scanData) => scanController.handleScan(scanData)
+);
 
 // ============================================
-// 🚀 START SERVER
+// 🖥️ SYSTEM UTILITIES
 // ============================================
-const os = require('os');
 
+/**
+ * Get local IP address
+ */
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
   for (let iface of Object.values(interfaces)) {
@@ -597,6 +108,9 @@ function getLocalIP() {
   return 'localhost';
 }
 
+/**
+ * Create desktop shortcut
+ */
 function createDesktopShortcut() {
   try {
     const desktopPath = path.join(os.homedir(), 'Desktop');
@@ -606,46 +120,74 @@ function createDesktopShortcut() {
       fs.unlinkSync(shortcutPath);
     }
     
-    const iconPath = path.join(__dirname, 'assets', 'images', 'logo.ico').replace(/\\/g, '\\\\');
+    const iconPath = path.join(config.paths.assets, 'images', 'logo.ico')
+      .replace(/\\/g, '\\\\');
     
     const shortcutContent = `[InternetShortcut]
-URL=http://localhost:${PORT}
+URL=http://localhost:${config.server.port}
 IconIndex=0
 IconFile=${iconPath}
 `;
+    
     fs.writeFileSync(shortcutPath, shortcutContent);
-    console.log('   ✅ Desktop shortcut created!');
+    logger.success('Desktop shortcut created');
   } catch (err) {
-    console.log('   ⚠️  Could not create shortcut:', err.message);
+    logger.warn('Could not create desktop shortcut', { error: err.message });
   }
 }
 
-app.listen(PORT, '0.0.0.0', () => {
-  ensureSoundFolder();
-  
+/**
+ * Display startup banner
+ */
+function displayStartupBanner() {
   const localIP = getLocalIP();
   
   console.log('\n╔════════════════════════════════════════════════╗');
   console.log('║  🚀 QR Access Control System (ME31)           ║');
-  console.log(`║  📡 Port: ${PORT}                                 ║`);
+  console.log(`║  📡 Port: ${config.server.port}                                 ║`);
   console.log(`║  🔌 Controller: ME31 Modbus TCP               ║`);
   console.log('╚════════════════════════════════════════════════╝');
-  console.log('\n📍 Access from:');
-  console.log(`   🏠 This computer:  http://localhost:${PORT}`);
-  console.log(`   🌐 Other devices:  http://${localIP}:${PORT}`);
+  console.log('\n📍 Access URLs:');
+  console.log(`   🏠 Local:   http://localhost:${config.server.port}`);
+  console.log(`   🌐 Network: http://${localIP}:${config.server.port}`);
   console.log('\n🔌 ME31 Devices:');
-  Object.entries(GATES).forEach(([key, gate]) => {
-    console.log(`   ${gate.name}: ${gate.me31.ip}:${gate.me31.port} (Relay ${gate.me31.relayChannel + 1})`);
-  });
   
+  Object.entries(config.gates).forEach(([key, gate]) => {
+    console.log(
+      `   ${gate.name}: ${gate.me31.ip}:${gate.me31.port} ` +
+      `(Relay ${gate.me31.relayChannel + 1})`
+    );
+  });
+  console.log('');
+}
+
+// ============================================
+// 🚀 START SERVER
+// ============================================
+
+app.listen(config.server.port, config.server.host, () => {
+  displayStartupBanner();
   createDesktopShortcut();
   
-  const { exec } = require('child_process');
-  exec(`start http://localhost:${PORT}`);
+  // Auto-open browser
+  exec(`start http://localhost:${config.server.port}`);
+  
+  logger.success('Server started successfully');
 });
 
+// ============================================
+// 🛑 GRACEFUL SHUTDOWN
+// ============================================
+
 process.on('SIGINT', () => {
-  console.log('\n\n👋 Service stopped');
-  sseClients.clear();
+  logger.info('Shutting down gracefully...');
+  
+  // Disconnect scanners
+  scannerService.disconnectAll();
+  
+  // Clear SSE clients
+  scanController.sseClients.clear();
+  
+  logger.success('Service stopped');
   process.exit(0);
 });
