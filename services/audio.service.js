@@ -1,69 +1,112 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const { SOUND_FILES } = require('../config/sounds.config');
+const config = require('../config');
+const logger = require('../utils/logger');
 
 // ============================================
 // 🔊 AUDIO SERVICE
 // ============================================
 
-let isPlayingSound = false;
-
-function playSoundSilent(soundFile) {
-  if (!fs.existsSync(soundFile)) {
-    console.error('❌ Sound file not found:', soundFile);
-    return;
+class AudioService {
+  constructor() {
+    this.isPlaying = false;
+    this.soundsPath = config.paths.sounds;
+    this.sounds = config.sounds;
+    this.ensureSoundFolder();
   }
 
-  if (isPlayingSound) return;
-  isPlayingSound = true;
-
-  execFile(
-    'ffplay',
-    ['-nodisp', '-autoexit', '-loglevel', 'error', soundFile],
-    { windowsHide: true },
-    () => {
-      isPlayingSound = false;
+  ensureSoundFolder() {
+    if (!fs.existsSync(this.soundsPath)) {
+      fs.mkdirSync(this.soundsPath, { recursive: true });
+      logger.info('Created sounds folder');
     }
-  );
-}
-
-function playSoundSuccess(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.SUCCESS_VN : SOUND_FILES.SUCCESS_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function playSoundDenied(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.DENIED_VN : SOUND_FILES.DENIED_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function playSoundCCCDRequest(isVietnamese = true) {
-  const soundFile = isVietnamese ? SOUND_FILES.CCCD_REQUEST_VN : SOUND_FILES.CCCD_REQUEST_FOREIGN;
-  playSoundSilent(soundFile);
-}
-
-function ensureSoundFolder() {
-  const soundsDir = path.join(__dirname, '..', 'sounds');
-  if (!fs.existsSync(soundsDir)) {
-    fs.mkdirSync(soundsDir);
-    console.log('📁 Created sounds folder');
+    
+    this.checkSoundFiles();
   }
-  
-  console.log('\n🔊 Checking sound files:');
-  Object.entries(SOUND_FILES).forEach(([key, filePath]) => {
-    if (fs.existsSync(filePath)) {
-      console.log(`   ✅ ${key}: ${path.basename(filePath)}`);
-    } else {
-      console.log(`   ⚠️  ${key}: ${path.basename(filePath)} - MISSING`);
+
+  checkSoundFiles() {
+    logger.info('Checking sound files:');
+    Object.entries(this.sounds).forEach(([key, filename]) => {
+      const filePath = path.join(this.soundsPath, filename);
+      if (fs.existsSync(filePath)) {
+        logger.success(`${key}: ${filename}`);
+      } else {
+        logger.warn(`${key}: ${filename} - MISSING`);
+      }
+    });
+  }
+
+  /**
+   * Play sound file silently (no console output)
+   */
+  play(filename) {
+    const soundFile = path.join(this.soundsPath, filename);
+
+    if (!fs.existsSync(soundFile)) {
+      logger.error('Sound file not found', null, { file: soundFile });
+      return;
     }
-  });
-  console.log('');
+
+    if (this.isPlaying) {
+      logger.debug('Already playing sound, skipping');
+      return;
+    }
+
+    this.isPlaying = true;
+
+    execFile(
+      'ffplay',
+      ['-nodisp', '-autoexit', '-loglevel', 'error', soundFile],
+      { windowsHide: true },
+      (error) => {
+        this.isPlaying = false;
+        if (error) {
+          logger.error('Error playing sound', error);
+        }
+      }
+    );
+  }
+
+  /**
+   * Play success sound based on nationality
+   */
+  playSuccess(isVietnamese = true) {
+    const sound = isVietnamese 
+      ? this.sounds.SUCCESS_VN 
+      : this.sounds.SUCCESS_FOREIGN;
+    this.play(sound);
+  }
+
+  /**
+   * Play denied sound based on nationality
+   */
+  playDenied(isVietnamese = true) {
+    const sound = isVietnamese 
+      ? this.sounds.DENIED_VN 
+      : this.sounds.DENIED_FOREIGN;
+    this.play(sound);
+  }
+
+  /**
+   * Play CCCD verification request
+   */
+  playCCCDRequest(isVietnamese = true) {
+    const sound = isVietnamese 
+      ? this.sounds.CCCD_REQUEST_VN 
+      : this.sounds.CCCD_REQUEST_FOREIGN;
+    this.play(sound);
+  }
+
+  /**
+   * Play error sound
+   */
+  playError() {
+    this.play(this.sounds.ERROR);
+  }
 }
 
-module.exports = {
-  playSoundSuccess,
-  playSoundDenied,
-  playSoundCCCDRequest,
-  ensureSoundFolder
-};
+// Singleton instance
+const audioService = new AudioService();
+
+module.exports = audioService;

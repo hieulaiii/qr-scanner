@@ -27,6 +27,7 @@ async function checkZebraInfo() {
   
   // Copy config này vào GATES
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📋 Copy config này vào code:\n');
   console.log('const GATES = {');
   zebraPorts.forEach((p, i) => {
     const gateName = String.fromCharCode(65 + i); // A, B, C...
