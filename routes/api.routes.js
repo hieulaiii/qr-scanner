@@ -1,122 +1,109 @@
 const express = require('express');
 const router = express.Router();
-const scanController = require('../controllers/scan.controller');
-const storageService = require('../services/storage.service');
-const config = require('../config');
+const { loadStaffScanHistory, updateStaffScanReason } = require('../services/staff.service');
+const { addSSEClient, removeSSEClient, sendSSEToAllClients } = require('../utils/sse.util');
 
 // ============================================
-// 📡 API ROUTES
+// 🔌 API ROUTES
 // ============================================
 
-/**
- * SSE - Server-Sent Events Stream
- */
+let latestScan = null;
+
+// SSE endpoint
 router.get('/scan-stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
   
-  scanController.addSSEClient(res);
+  if (latestScan) {
+    res.write(`data: ${JSON.stringify({
+      event: 'newScan',
+      data: latestScan
+    })}\n\n`);
+  }
   
-  // Heartbeat to keep connection alive
+  addSSEClient(res);
+  
   const heartbeat = setInterval(() => {
     res.write(`: heartbeat\n\n`);
-  }, config.business.sseHeartbeatInterval);
+  }, 30000);
   
   req.on('close', () => {
     clearInterval(heartbeat);
-    scanController.removeSSEClient(res);
+    removeSSEClient(res);
   });
 });
 
-/**
- * Check login status
- */
 router.get('/check-login', (req, res) => {
-  res.json({ 
-    isLoggedIn: scanController.isLoggedIn() 
-  });
+  const { getCurrentLoginSession } = require('./web.routes');
+  res.json({ isLoggedIn: getCurrentLoginSession() !== null });
 });
 
-/**
- * Get current logged-in user
- */
 router.get('/current-user', (req, res) => {
-  res.json({ 
-    user: scanController.getCurrentUser() 
-  });
+  const { getCurrentLoginSession } = require('./web.routes');
+  res.json({ user: getCurrentLoginSession() });
 });
 
-/**
- * Logout
- */
 router.post('/logout', (req, res) => {
-  scanController.logout();
+  const { setCurrentLoginSession } = require('./web.routes');
+  setCurrentLoginSession(null);
   res.json({ success: true });
 });
 
-/**
- * Get latest scan data
- */
 router.get('/latest-scan', (req, res) => {
-  const latestScan = scanController.getLatestScan();
-  const history = storageService.getHistory({ 
-    limit: config.business.scanHistoryLimit 
+  const staffHistory = loadStaffScanHistory();
+  res.json({
+    latestScan,
+    history: staffHistory.slice(0, 50)
   });
-  
-  res.json({ latestScan, history });
 });
 
-/**
- * Get staff scan history with filters
- */
 router.get('/staff-history', (req, res) => {
-  const { startDate, endDate, staffId } = req.query;
+  const { startDate, endDate } = req.query;
+  let history = loadStaffScanHistory();
   
-  const history = storageService.getHistory({
-    startDate,
-    endDate,
-    staffId
-  });
+  if (startDate || endDate) {
+    history = history.filter(record => {
+      const recordDate = new Date(record.timestamp);
+      const start = startDate ? new Date(startDate) : new Date(0);
+      const end = endDate ? new Date(endDate) : new Date();
+      end.setHours(23, 59, 59, 999);
+      
+      return recordDate >= start && recordDate <= end;
+    });
+  }
   
   res.json({ history });
 });
 
-/**
- * Update scan reason/note
- */
 router.post('/update-scan-reason', (req, res) => {
   const { scanId, reason } = req.body;
   
   if (!scanId || !reason) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Missing scanId or reason' 
-    });
+    return res.status(400).json({ success: false, message: 'Missing scanId or reason' });
   }
   
-  const success = storageService.updateRecord(scanId, { note: reason });
+  const success = updateStaffScanReason(scanId, reason);
   
   if (success) {
-    res.json({ 
-      success: true, 
-      message: 'Cập nhật lý do thành công' 
-    });
+    res.json({ success: true, message: 'Cập nhật lý do thành công' });
   } else {
-    res.status(404).json({ 
-      success: false, 
-      message: 'Không tìm thấy bản ghi' 
-    });
+    res.status(404).json({ success: false, message: 'Không tìm thấy bản ghi' });
   }
 });
 
-/**
- * Get staff list
- */
-router.get('/staff-list', (req, res) => {
-  const staffList = storageService.loadStaffList();
-  res.json({ staffList });
-});
+function getLatestScan() {
+  return latestScan;
+}
 
-module.exports = router;
+function setLatestScan(scan) {
+  latestScan = scan;
+  sendSSEToAllClients({ event: 'newScan', data: latestScan });
+}
+
+module.exports = {
+  router,
+  getLatestScan,
+  setLatestScan
+};

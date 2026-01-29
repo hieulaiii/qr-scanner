@@ -59,7 +59,7 @@ async function initScanners(gates, onScan) {
           gateName: gate.name,
           qrData,
           apikey: gate.apikey,
-          me31: gate.me31
+          inbio: gate.inbio
         });
       });
       
@@ -67,12 +67,7 @@ async function initScanners(gates, onScan) {
         connectedCount++;
         console.log(`✅ ${gate.name} connected`);
         console.log(`   └─ COM: ${portInfo.path} (auto-detected)`);
-        console.log(`   └─ Location: ${gate.locationId}`);
-        
-        if (gate.me31) {
-          console.log(`   └─ ME31: ${gate.me31.ip}:${gate.me31.port} (Relay ${gate.me31.relayChannel + 1})`);
-        }
-        console.log('');
+        console.log(`   └─ Location: ${gate.locationId}\n`);
       });
       
       port.on('error', err => {
